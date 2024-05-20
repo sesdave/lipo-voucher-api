@@ -1,34 +1,31 @@
-import { DynamoDB, SSM } from 'aws-sdk';
 import { APIGatewayProxyEvent, Context, APIGatewayProxyResult } from 'aws-lambda';
-import { randomBytes } from 'crypto';
 import { handler } from '../src/generateAndStoreVoucher';
+import { getOffensiveWords, checkCodeExists, storeVoucher } from '../src/util/awsServices';
+import { generateUniqueVoucherCode } from '../src/util/codeGenerator';
+import { parseRequestBody, validateVoucherData } from '../src/util/utils';
 
-jest.mock('aws-sdk', () => {
-  const mockDocumentClient = {
-    put: jest.fn().mockImplementation(() => ({
-      promise: jest.fn(),
-    })),
-  };
-  const mockSSM = {
-    getParameter: jest.fn().mockImplementation(() => ({
-      promise: jest.fn().mockResolvedValue({ Parameter: { Value: '' } }),
-    })),
-  };
-  return {
-    SSM: jest.fn(() => mockSSM),
-    DynamoDB: {
-      DocumentClient: jest.fn(() => mockDocumentClient),
-    },
-  };
-});
-
-jest.mock('crypto', () => ({
-  randomBytes: jest.fn(),
+// Mocking utility functions
+jest.mock('../src/util/awsServices', () => ({
+  getOffensiveWords: jest.fn(),
+  checkCodeExists: jest.fn(),
+  storeVoucher: jest.fn(),
 }));
 
-const mockedDynamoDb = new DynamoDB.DocumentClient();
-const mockedSSM = new SSM();
-const mockedRandomBytes = randomBytes as jest.MockedFunction<typeof randomBytes>;
+jest.mock('../src/util/codeGenerator', () => ({
+  generateUniqueVoucherCode: jest.fn(),
+}));
+
+jest.mock('../src/util/utils', () => ({
+  parseRequestBody: jest.fn(),
+  validateVoucherData: jest.fn(),
+}));
+
+const mockedGetOffensiveWords = getOffensiveWords as jest.Mock;
+const mockedCheckCodeExists = checkCodeExists as jest.Mock;
+const mockedStoreVoucher = storeVoucher as jest.Mock;
+const mockedGenerateUniqueVoucherCode = generateUniqueVoucherCode as jest.Mock;
+const mockedParseRequestBody = parseRequestBody as jest.Mock;
+const mockedValidateVoucherData = validateVoucherData as jest.Mock;
 
 describe('GenerateVoucherFunction', () => {
   beforeEach(() => {
@@ -43,34 +40,45 @@ describe('GenerateVoucherFunction', () => {
       }),
     };
 
-    // Mock randomBytes to return predictable bytes
-    mockedRandomBytes.mockImplementation((size: number) => Buffer.from(new Uint8Array(size).fill(65)));
-  
+    const parsedRequestBody = { value: 100, expiryDate: '2024-12-31' };
+    const generatedVoucherCode = 'UNIQUEVOUCHERCODE';
+
+    mockedParseRequestBody.mockReturnValue(parsedRequestBody);
+    mockedValidateVoucherData.mockReturnValue(true);
+    mockedGetOffensiveWords.mockResolvedValue(new Set());
+    mockedGenerateUniqueVoucherCode.mockResolvedValue(generatedVoucherCode);
+    mockedCheckCodeExists.mockResolvedValue(false);
+    mockedStoreVoucher.mockResolvedValue(undefined);
+
     const result = await handler(event as APIGatewayProxyEvent, {} as Context, () => {}) as APIGatewayProxyResult;
 
     expect(result.statusCode).toBe(201);
     const body = JSON.parse(result.body);
     expect(body).toHaveProperty('message', 'Voucher generated and stored successfully');
-    expect(body).toHaveProperty('voucherCode', '3333333333333333');  // As per the mock
+    expect(body).toHaveProperty('voucherCode', generatedVoucherCode);
 
-    const params = {
-      TableName: process.env.VOUCHER_CODES_TABLE || 'VoucherCodes',
-      Item: {
-        code: '3333333333333333',
-        value: 100,
-        expiryDate: '2024-12-31',
-        createdAt: expect.any(String),
-        isValid: false,
-      },
+    expect(mockedParseRequestBody).toHaveBeenCalledWith(event);
+    expect(mockedValidateVoucherData).toHaveBeenCalledWith(parsedRequestBody.value, parsedRequestBody.expiryDate);
+    expect(mockedGetOffensiveWords).toHaveBeenCalledWith(process.env.OFFENSIVE_WORDS_PARAM_PATH);
+    expect(mockedGenerateUniqueVoucherCode).toHaveBeenCalledWith(new Set(), expect.any(Function));
+  
+    const expectedVoucher = {
+      code: generatedVoucherCode,
+      value: 100,
+      expiryDate: '2024-12-31',
+      createdAt: expect.any(String),
+      isValid: true,
     };
-
-    expect(mockedDynamoDb.put).toHaveBeenCalledWith(params);
+    expect(mockedStoreVoucher).toHaveBeenCalledWith(process.env.VOUCHER_CODES_TABLE || 'VoucherCodes', expectedVoucher);
   });
 
   it('should return 400 if value or expiryDate is missing', async () => {
     const event: Partial<APIGatewayProxyEvent> = {
       body: JSON.stringify({ value: 100 }),
     };
+
+    mockedParseRequestBody.mockReturnValue({ value: 100 });
+    mockedValidateVoucherData.mockReturnValue(false);
 
     const result = await handler(event as APIGatewayProxyEvent, {} as Context, () => {}) as APIGatewayProxyResult;
 
@@ -87,10 +95,9 @@ describe('GenerateVoucherFunction', () => {
       }),
     };
 
-    const mockPut = mockedDynamoDb.put as jest.MockedFunction<typeof mockedDynamoDb.put>;
-    mockPut.mockReturnValueOnce({
-      promise: jest.fn().mockRejectedValue(new Error('DynamoDB error')),
-    } as any);
+    mockedParseRequestBody.mockReturnValue({ value: 100, expiryDate: '2024-12-31' });
+    mockedValidateVoucherData.mockReturnValue(true);
+    mockedGetOffensiveWords.mockRejectedValue(new Error('SSM error'));
 
     const result = await handler(event as APIGatewayProxyEvent, {} as Context, () => {}) as APIGatewayProxyResult;
 
