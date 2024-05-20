@@ -1,0 +1,203 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Fintech Voucher API
+
+Resources:
+  VoucherTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: VoucherCodes
+      AttributeDefinitions:
+        - AttributeName: code
+          AttributeType: S
+      KeySchema:
+        - AttributeName: code
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: FintechUserPool
+      AutoVerifiedAttributes:
+        - email
+
+  CognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: FintechUserPoolClient
+      UserPoolId: !Ref CognitoUserPool
+      GenerateSecret: false
+
+  CognitoIdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: FintechIdentityPool
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+        - ClientId: !Ref CognitoUserPoolClient
+          ProviderName: !GetAtt CognitoUserPool.ProviderName
+
+  CognitoAuthenticatedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: Cognito_FintechAuthenticatedRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                cognito-identity.amazonaws.com:aud: !Ref CognitoIdentityPool
+              "ForAnyValue:StringLike":
+                cognito-identity.amazonaws.com:amr: authenticated
+      Policies:
+        - PolicyName: CognitoFintechPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/VoucherCodes"
+
+  GenerateAndStoreVoucherFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: GenerateAndStoreVoucherFunction
+      Handler: generateAndStoreVoucher.handler
+      Runtime: nodejs18.x
+      CodeUri: dist/
+      MemorySize: 128
+      Timeout: 10
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: VoucherCodes
+      Environment:
+        Variables:
+          VOUCHER_CODES_TABLE: VoucherCodes
+          OFFENSIVE_WORDS_PARAM_PATH: /MyApp/OffensiveWords
+          AWS_REGION: !Ref AWS::Region
+      Events:
+        GenerateVoucherAPI:
+          Type: Api
+          Properties:
+            Path: /generate-voucher
+            Method: post
+            RestApiId: !Ref ApiGateway
+            Auth:
+              Authorizer: CognitoAuthorizer
+
+  ApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: FintechApi
+      StageName: Prod
+      Auth:
+        DefaultAuthorizer: CognitoAuthorizer
+        Authorizers:
+          CognitoAuthorizer:
+            UserPoolArn: !GetAtt CognitoUserPool.Arn
+
+  GetVoucherInfoFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: GetVoucherInfoFunction
+      Handler: getVoucherInfo.handler
+      Runtime: nodejs18.x
+      CodeUri: dist/
+      MemorySize: 128
+      Timeout: 10
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: VoucherCodes
+      Environment:
+        Variables:
+          VOUCHER_CODES_TABLE: VoucherCodes
+          AWS_REGION: !Ref AWS::Region      
+      Events:
+        GetVoucherInfoAPI:
+          Type: Api
+          Properties:
+            Path: /get-voucher-info
+            Method: get
+            RestApiId: !Ref ApiGateway
+            Auth:
+              Authorizer: CognitoAuthorizer
+
+  InvalidateExpiredVouchersFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: InvalidateExpiredVouchersFunction
+      Handler: invalidateExpiredVouchers.handler
+      Runtime: nodejs18.x
+      CodeUri: dist/
+      MemorySize: 128
+      Timeout: 10
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: VoucherCodes
+      Environment:
+        Variables:
+          VOUCHER_CODES_TABLE: VoucherCodes
+          AWS_REGION: !Ref AWS::Region      
+      Events:
+        InvalidateExpiredVouchersEvent:
+          Type: Schedule
+          Properties:
+            Schedule: cron(30 22 * * ? *)  # 00:30 SAST
+
+  UsagePlan:
+    Type: AWS::ApiGateway::UsagePlan
+    Properties:
+      UsagePlanName: FintechVoucherUsagePlan
+      ApiStages:
+        - ApiId: !Ref ApiGateway
+          Stage: Prod
+      Throttle:
+        BurstLimit: 100
+        RateLimit: 50
+
+  UsagePlanKey:
+    Type: AWS::ApiGateway::UsagePlanKey
+    Properties:
+      KeyId: !Ref ApiGatewayKey
+      KeyType: API_KEY
+      UsagePlanId: !Ref UsagePlan
+
+  ApiGatewayKey:
+    Type: AWS::ApiGateway::ApiKey
+    Properties:
+      Enabled: true
+      Name: FintechVoucherApiKey
+
+Outputs:
+  UserPoolId:
+    Value: !Ref CognitoUserPool
+    Export:
+      Name: UserPoolId
+
+  UserPoolClientId:
+    Value: !Ref CognitoUserPoolClient
+    Export:
+      Name: UserPoolClientId
+
+  IdentityPoolId:
+    Value: !Ref CognitoIdentityPool
+    Export:
+      Name: IdentityPoolId
+
+  GenerateAndStoreVoucherAPIEndpoint:
+    Description: "API Gateway endpoint URL for generating and storing vouchers"
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Prod/generate-voucher"
+
+  GetVoucherInfoAPIEndpoint:
+    Description: "API Gateway endpoint URL for retrieving voucher information"
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Prod/get-voucher-info"
