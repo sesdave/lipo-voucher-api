@@ -80,7 +80,7 @@ Resources:
       Runtime: nodejs18.x
       CodeUri: dist/
       MemorySize: 128
-      Timeout: 10
+      Timeout: 30
       Policies:
         - DynamoDBCrudPolicy:
             TableName: VoucherCodes
@@ -88,7 +88,6 @@ Resources:
         Variables:
           VOUCHER_CODES_TABLE: VoucherCodes
           OFFENSIVE_WORDS_PARAM_PATH: /MyApp/OffensiveWords
-          AWS_REGION: !Ref AWS::Region
       Events:
         GenerateVoucherAPI:
           Type: Api
@@ -107,14 +106,13 @@ Resources:
       Runtime: nodejs18.x
       CodeUri: dist/
       MemorySize: 128
-      Timeout: 10
+      Timeout: 30
       Policies:
         - DynamoDBCrudPolicy:
             TableName: VoucherCodes
       Environment:
         Variables:
-          VOUCHER_CODES_TABLE: VoucherCodes
-          AWS_REGION: !Ref AWS::Region      
+          VOUCHER_CODES_TABLE: VoucherCodes  
       Events:
         GetVoucherInfoAPI:
           Type: Api
@@ -133,19 +131,41 @@ Resources:
       Runtime: nodejs18.x
       CodeUri: dist/
       MemorySize: 128
-      Timeout: 10
+      Timeout: 30
       Policies:
         - DynamoDBCrudPolicy:
             TableName: VoucherCodes
       Environment:
         Variables:
-          VOUCHER_CODES_TABLE: VoucherCodes
-          AWS_REGION: !Ref AWS::Region      
+          VOUCHER_CODES_TABLE: VoucherCodes     
       Events:
         InvalidateExpiredVouchersEvent:
           Type: Schedule
           Properties:
             Schedule: cron(30 22 * * ? *)  # 00:30 SAST
+
+  ApiGatewayRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ApiGatewayPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"          
 
   ApiGateway:
     Type: AWS::Serverless::Api
@@ -157,39 +177,17 @@ Resources:
         Authorizers:
           CognitoAuthorizer:
             UserPoolArn: !GetAtt CognitoUserPool.Arn
+      GatewayResponses:
+        UNAUTHORIZED:
+          StatusCode: "401"
+          ResponseTemplates:
+            application/json: "{ \"message\": $context.error.messageString }"
 
   ApiGatewayAccessLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub "/aws/apigateway/${ApiGateway}/access-logs"
       RetentionInDays: 14
-
-  ApiGatewayAccount:
-    Type: AWS::ApiGateway::Account
-    Properties:
-      CloudWatchRoleArn: !GetAtt ApiGatewayCloudWatchRole.Arn
-
-  ApiGatewayCloudWatchRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: apigateway.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: ApiGatewayCloudWatchPolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - logs:CreateLogGroup
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource: 'arn:aws:logs:*:*:*'
 
   LambdaErrorAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -229,9 +227,6 @@ Resources:
     Type: AWS::ApiGateway::UsagePlan
     Properties:
       UsagePlanName: FintechVoucherUsagePlan
-      ApiStages:
-        - ApiId: !Ref ApiGateway
-          Stage: Prod
       Throttle:
         BurstLimit: 100
         RateLimit: 50

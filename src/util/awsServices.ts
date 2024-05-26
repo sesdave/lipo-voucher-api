@@ -1,6 +1,6 @@
 import { DynamoDB, SSM } from 'aws-sdk';
 
-const dynamoDb = new DynamoDB.DocumentClient({ region: process.env.AWS_REGION || 'us-east-1' });
+const dynamoDb = new DynamoDB.DocumentClient();
 const ssm = new SSM();
 
 export async function getOffensiveWords(paramPath: string): Promise<Set<string>> {
@@ -26,8 +26,13 @@ export async function checkCodeExists(tableName: string, code: string): Promise<
     TableName: tableName,
     Key: { code },
   };
-  const result = await dynamoDb.get(checkParams).promise();
-  return !!result.Item;
+  try{
+    const result = await dynamoDb.get(checkParams).promise();
+    return !!result.Item;
+  } catch (error) {
+    console.error('Error checking if code exists in DynamoDB:', error);
+    throw new Error('Error accessing DynamoDB');
+  }
 }
 
 export async function storeVoucher(tableName: string, voucher: any): Promise<void> {

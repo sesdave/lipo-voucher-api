@@ -5,7 +5,7 @@ const dynamoDb = new DynamoDB.DocumentClient({ region: process.env.AWS_REGION ||
 
 export const handler: APIGatewayProxyHandler = async (event) => {
   const code = event.queryStringParameters?.code;
-  console.log("Query parameter 'code':", code);
+
 
   if (!code) {
     console.error("Voucher code is missing in the request");
@@ -23,9 +23,8 @@ export const handler: APIGatewayProxyHandler = async (event) => {
   try {
     console.log("Querying DynamoDB with params:", params);
     const result = await dynamoDb.get(params).promise();
-    console.log("DynamoDB response:", result);
 
-    if (!result.Item) {
+    if (!result) {
       return {
         statusCode: 404,
         body: JSON.stringify({ message: 'Voucher not found' }),

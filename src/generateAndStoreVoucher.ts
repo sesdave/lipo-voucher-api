@@ -15,7 +15,6 @@ export const handler: APIGatewayProxyHandler = async (event) => {
         body: JSON.stringify({ message: 'Invalid voucher data: value and expiryDate are required' }),
       };
     }
-
     const offensiveWords = await getOffensiveWords(process.env.OFFENSIVE_WORDS_PARAM_PATH!);
     const voucherCode = await generateUniqueVoucherCode(offensiveWords, async (code) => {
       return checkCodeExists(process.env.VOUCHER_CODES_TABLE || 'VoucherCodes', code);
