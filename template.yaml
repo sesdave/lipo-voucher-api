@@ -33,7 +33,7 @@ Resources:
     Properties:
       ClientName: FintechUserPoolClient
       UserPoolId: !Ref CognitoUserPool
-      GenerateSecret: false
+      GenerateSecret: true
 
   CognitoIdentityPool:
     Type: AWS::Cognito::IdentityPool
@@ -84,6 +84,10 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: VoucherCodes
+        - Statement:
+            Effect: Allow
+            Action: ssm:GetParameter
+            Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/MyApp/OffensiveWords"
       Environment:
         Variables:
           VOUCHER_CODES_TABLE: VoucherCodes
@@ -120,8 +124,6 @@ Resources:
             Path: /get-voucher-info
             Method: get
             RestApiId: !Ref ApiGateway
-            Auth:
-              Authorizer: CognitoAuthorizer
 
   InvalidateExpiredVouchersFunction:
     Type: AWS::Serverless::Function

@@ -22,9 +22,9 @@ export const handler: APIGatewayProxyHandler = async (event) => {
 
   try {
     console.log("Querying DynamoDB with params:", params);
-    const result = await dynamoDb.get(params).promise();
+    const result: any = await dynamoDb.get(params).promise();
 
-    if (!result) {
+    if (!result.Item) {
       return {
         statusCode: 404,
         body: JSON.stringify({ message: 'Voucher not found' }),
