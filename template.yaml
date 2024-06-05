@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Fintech Voucher API
+Description: API Fintech Voucher
 
 Globals:
   Function:
@@ -21,12 +21,19 @@ Resources:
         ReadCapacityUnits: 5
         WriteCapacityUnits: 5
 
+  FintechAccount:
+    Type: AWS::Organizations::Account
+    Properties:
+      AccountName: FintechAccount
+      Email: fintech-account@example.com
+      RoleName: OrganizationAccountAccessRole      
+
   CognitoUserPool:
     Type: AWS::Cognito::UserPool
     Properties:
       UserPoolName: FintechUserPool
       AutoVerifiedAttributes:
-        - email
+        - email !Ref FintechAccount
 
   CognitoUserPoolClient:
     Type: AWS::Cognito::UserPoolClient
@@ -43,34 +50,6 @@ Resources:
       CognitoIdentityProviders:
         - ClientId: !Ref CognitoUserPoolClient
           ProviderName: !GetAtt CognitoUserPool.ProviderName
-
-  CognitoAuthenticatedRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: Cognito_FintechAuthenticatedRole
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Federated: cognito-identity.amazonaws.com
-            Action: sts:AssumeRoleWithWebIdentity
-            Condition:
-              StringEquals:
-                cognito-identity.amazonaws.com:aud: !Ref CognitoIdentityPool
-              "ForAnyValue:StringLike":
-                cognito-identity.amazonaws.com:amr: authenticated
-      Policies:
-        - PolicyName: CognitoFintechPolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - dynamodb:PutItem
-                  - dynamodb:GetItem
-                  - dynamodb:UpdateItem
-                Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/VoucherCodes"
 
   GenerateAndStoreVoucherFunction:
     Type: AWS::Serverless::Function
@@ -144,30 +123,7 @@ Resources:
         InvalidateExpiredVouchersEvent:
           Type: Schedule
           Properties:
-            Schedule: cron(30 22 * * ? *)  # 00:30 SAST
-
-  ApiGatewayRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: apigateway.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: ApiGatewayPolicy
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - lambda:InvokeFunction
-                  - logs:CreateLogGroup
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource: "*"          
+            Schedule: cron(30 22 * * ? *)  # 00:30 SAST         
 
   ApiGateway:
     Type: AWS::Serverless::Api
@@ -261,11 +217,3 @@ Outputs:
     Value: !Ref CognitoIdentityPool
     Export:
       Name: IdentityPoolId
-
-  GenerateAndStoreVoucherAPIEndpoint:
-    Description: "API Gateway endpoint URL for generating and storing vouchers"
-    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Prod/generate-voucher"
-
-  GetVoucherInfoAPIEndpoint:
-    Description: "API Gateway endpoint URL for retrieving voucher information"
-    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Prod/get-voucher-info"
